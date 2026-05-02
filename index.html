@@ -261,10 +261,10 @@
       const json = encodeURIComponent(JSON.stringify(favs));
       document.cookie = `bvg_favs=${json};path=/;max-age=31536000;SameSite=Lax`;
     }
-    function addFavorite(loc) {
+    function addFavorite(loc, customName) {
       const favs = getFavorites();
       if (!favs.find(f => f.id === loc.id)) {
-        favs.unshift(loc);
+        favs.unshift({ id: loc.id, name: customName || locDisplayName(loc), type: loc.type, lat: loc.latitude, lon: loc.longitude });
         saveFavorites(favs);
       }
     }
@@ -302,8 +302,9 @@
 
     function selectLocation(field, loc) {
       const input = field === 'from' ? fromInput : toInput;
-      input.value = loc.name;
-      state[field] = { id: loc.id, name: loc.name };
+      const dname = locDisplayName(loc);
+      input.value = dname;
+      state[field] = { id: loc.id, name: dname, type: loc.type, lat: loc.latitude, lon: loc.longitude };
       closeSuggestions(field === 'from' ? fromSuggest : toSuggest);
       updateSearchBtn();
     }
@@ -331,20 +332,25 @@
     function buildSuggestionItem(loc, field, isFav) {
       const div = document.createElement('div');
       div.className = 'item';
+      const dname = locDisplayName(loc);
       div.innerHTML = `
-        <span class="item-name">${escHtml(loc.name)}</span>
+        <span class="item-name">${escHtml(dname)}</span>
         <span class="item-type">${loc.type || ''}</span>
-        <button class="fav-btn ${isFav ? 'faved' : ''}" data-id="${escHtml(loc.id)}" data-name="${escHtml(loc.name)}" title="${isFav ? 'Remove favorite' : 'Add to favorites'}">★</button>`;
+        <button class="fav-btn ${isFav ? 'faved' : ''}" data-id="${escHtml(loc.id)}" data-name="${escHtml(dname)}" title="${isFav ? 'Remove favorite' : 'Add to favorites'}">★</button>`;
       div.querySelector('.item-name').addEventListener('click', () => selectLocation(field, loc));
       div.querySelector('.fav-btn').addEventListener('click', (e) => {
         e.stopPropagation();
         if (isFavorited(loc.id)) {
           removeFavorite(loc.id);
+          renderSuggestions(field, currentItems);
         } else {
-          addFavorite(loc);
+          const defaultName = locDisplayName(loc);
+          const customName = prompt('Name this favorite:', defaultName);
+          if (customName !== null) {
+            addFavorite(loc, customName.trim() || defaultName);
+            renderSuggestions(field, currentItems);
+          }
         }
-        // Re-render suggestions
-        renderSuggestions(field, currentItems);
       });
       return div;
     }
@@ -359,8 +365,8 @@
       const query = (field === 'from' ? fromInput : toInput).value.trim().toLowerCase();
       const favs = getFavorites();
       const matchingFavs = query
-        ? favs.filter(f => f.name.toLowerCase().includes(query))
-        : favs.slice(0, 8); // show all if no query, cap at 8
+        ? favs.filter(f => locDisplayName(f).toLowerCase().includes(query))
+        : favs.slice(0, 8);
 
       if (matchingFavs.length > 0) {
         const label = document.createElement('div');
@@ -395,6 +401,9 @@
       el.classList.add('open');
     }
 
+    function locDisplayName(loc) {
+      return loc.name || loc.address || '';
+    }
     function escHtml(s) {
       const d = document.createElement('div');
       d.textContent = s;
@@ -405,7 +414,7 @@
       const input = field === 'from' ? fromInput : toInput;
       const query = input.value.trim();
 
-      // Clear selection when user types
+      // Clear selection when user modifies the text
       if (state[field] && state[field].name !== query) {
         clearSelection(field);
       }
@@ -488,6 +497,26 @@
     });
 
     // --- Search ---
+    async function resolveToStopId(loc) {
+      // If it's already a stop/station, use its ID directly
+      if (loc.type === 'stop' || loc.type === 'station') return loc.id;
+      // For addresses/POIs, find the nearest stop
+      const addr = loc.name;
+      const url = `${API}/stops/reachable-from?address=${encodeURIComponent(addr)}&latitude=${loc.lat}&longitude=${loc.lon}&maxDuration=15&results=1`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`Reachable-from failed: ${res.status}`);
+      const data = await res.json();
+      const reachable = data.reachable;
+      if (!Array.isArray(reachable) || reachable.length === 0) {
+        throw new Error(`No reachable stop found for "${addr}"`);
+      }
+      const stations = reachable[0].stations;
+      if (!Array.isArray(stations) || stations.length === 0) {
+        throw new Error(`No stations in reachable result for "${addr}"`);
+      }
+      return stations[0].id;
+    }
+
     async function resolveLocation(query) {
       const url = `${API}/locations?query=${encodeURIComponent(query)}&results=3`;
       const res = await fetch(url);
@@ -638,90 +667,158 @@
       return html;
     }
 
+    // --- Pagination state ---
+    let searchCtx = null; // { fromId, toId, laterRef, loading }
+
+    function renderJourney(j) {
+      const legs = j.legs || [];
+      const firstLeg = legs[0];
+      const lastLeg = legs[legs.length - 1];
+
+      const firstDep = (firstLeg && (firstLeg.departure || firstLeg.plannedDeparture));
+      const lastArr  = (lastLeg && (lastLeg.arrival || lastLeg.plannedArrival));
+      const totalSec = (firstDep && lastArr) ? (new Date(lastArr) - new Date(firstDep)) / 1000 : 0;
+      const totalDuration = formatDuration(totalSec) || '?';
+
+      const now = new Date();
+      const depDate = firstDep ? new Date(firstDep) : null;
+      const remainingMin = depDate ? Math.round((depDate - now) / 60000) : null;
+      let remainingHtml = '';
+      if (remainingMin != null && remainingMin > 0) {
+        const d = Math.floor(remainingMin / 1440);
+        const h = Math.floor((remainingMin % 1440) / 60);
+        const m = remainingMin % 60;
+        let label = 'In ';
+        if (d > 0) label += `${d}d `;
+        if (h > 0 || d > 0) label += `${h}h `;
+        label += `${m}m`;
+        remainingHtml = `<span style="color:#f5a623;font-weight:600">${label}</span> `;
+      }
+
+      const depTimeHtml = formatTimeWithDelay(
+        firstLeg && firstLeg.plannedDeparture,
+        firstLeg && firstLeg.departure,
+        firstLeg && firstLeg.departureDelay
+      );
+      const arrTimeHtml = formatTimeWithDelay(
+        lastLeg && lastLeg.plannedArrival,
+        lastLeg && lastLeg.arrival,
+        lastLeg && lastLeg.arrivalDelay
+      );
+
+      const lineSummary = legs.map(l => {
+        if (l.walking) return 'Walk';
+        const n = l.line ? l.line.name || '' : '';
+        return n || '?';
+      }).join(' → ');
+
+      let html = `<div class="journey">
+        <div class="journey-header">
+          <div>
+            <div class="line-summary">${lineSummary}</div>
+            <div class="journey-time">${remainingHtml}(${depTimeHtml} → ${arrTimeHtml})</div>
+          </div>
+          <span class="journey-duration">${totalDuration}</span>
+        </div>`;
+      legs.forEach((leg, idx) => {
+        html += renderLeg(leg);
+        if (leg.walking && idx < legs.length - 1) {
+          const nextLeg = legs[idx + 1];
+          const walkStart = leg.departure || leg.plannedDeparture;
+          const nextDep = nextLeg.departure || nextLeg.plannedDeparture;
+          if (walkStart && nextDep) {
+            const availSec = (new Date(nextDep) - new Date(walkStart)) / 1000;
+            const availMin = Math.round(availSec / 60);
+            html += `<div style="display:flex;align-items:center;gap:0.65rem;padding:0.15rem 0 0.15rem 0.3rem;font-size:0.8rem;color:#888">
+              <div style="min-width:28px;text-align:center;font-size:0.75rem">🚶</div>
+              <div><span style="font-weight:600;color:#555">${availMin} min</span> to next departure</div>
+            </div>`;
+          }
+        }
+      });
+      html += '</div>';
+      return html;
+    }
+
+    async function fetchJourneys(fromId, toId, laterThan) {
+      let url = `${API}/journeys?from=${encodeURIComponent(fromId)}&to=${encodeURIComponent(toId)}&results=5&stopovers=true`;
+      if (laterThan) url += `&laterThan=${encodeURIComponent(laterThan)}`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`Journey search failed: ${res.status}`);
+      return res.json();
+    }
+
+    async function loadMore() {
+      if (!searchCtx || searchCtx.loading || !searchCtx.laterRef) return;
+      searchCtx.loading = true;
+      const sentinel = document.getElementById('loadMoreSentinel');
+      if (sentinel) sentinel.textContent = 'Loading more journeys...';
+      try {
+        const data = await fetchJourneys(searchCtx.fromId, searchCtx.toId, searchCtx.laterRef);
+        searchCtx.laterRef = data.laterRef || null;
+        let html = '';
+        (data.journeys || []).forEach(j => { html += renderJourney(j); });
+        if (sentinel) sentinel.insertAdjacentHTML('beforebegin', html);
+        if (!searchCtx.laterRef && sentinel) {
+          sentinel.textContent = 'No more journeys';
+          sentinel.style.color = '#999';
+        }
+      } catch (err) {
+        if (sentinel) sentinel.textContent = 'Failed to load more';
+      } finally {
+        searchCtx.loading = false;
+        if (sentinel) sentinel.textContent = searchCtx.laterRef ? 'Scroll for more' : '';
+      }
+    }
+
+    // IntersectionObserver for infinite scroll
+    let scrollObserver = null;
+    function setupScrollObserver() {
+      if (scrollObserver) scrollObserver.disconnect();
+      const sentinel = document.getElementById('loadMoreSentinel');
+      if (!sentinel) return;
+      scrollObserver = new IntersectionObserver((entries) => {
+        if (entries[0].isIntersecting) loadMore();
+      }, { rootMargin: '200px' });
+      scrollObserver.observe(sentinel);
+    }
+
     async function search() {
       if (!state.from || !state.to) return;
 
       searchBtn.disabled = true;
       spinner.classList.add('active');
       results.innerHTML = '';
+      searchCtx = null;
 
       try {
         const fromLoc = state.from;
         const toLoc = state.to;
 
-        const journeysUrl = `${API}/journeys?from=${encodeURIComponent(fromLoc.id)}&to=${encodeURIComponent(toLoc.id)}&results=5&stopovers=true`;
-        const res = await fetch(journeysUrl);
-        if (!res.ok) throw new Error(`Journey search failed: ${res.status}`);
-        const data = await res.json();
+        const [fromId, toId] = await Promise.all([
+          resolveToStopId(fromLoc),
+          resolveToStopId(toLoc),
+        ]);
+
+        const data = await fetchJourneys(fromId, toId, null);
 
         if (!data.journeys || data.journeys.length === 0) {
           results.innerHTML += '<p style="text-align:center;color:#666">No journeys found.</p>';
           return;
         }
 
+        searchCtx = {
+          fromId,
+          toId,
+          laterRef: data.laterRef || null,
+          loading: false,
+        };
+
         let html = '';
-        data.journeys.forEach((j, i) => {
-          const legs = j.legs || [];
-          const firstLeg = legs[0];
-          const lastLeg = legs[legs.length - 1];
-
-          const firstDep = (firstLeg && (firstLeg.departure || firstLeg.plannedDeparture));
-          const lastArr  = (lastLeg && (lastLeg.arrival || lastLeg.plannedArrival));
-          const totalSec = (firstDep && lastArr) ? (new Date(lastArr) - new Date(firstDep)) / 1000 : 0;
-          const totalDuration = formatDuration(totalSec) || '?';
-
-          const now = new Date();
-          const depDate = firstDep ? new Date(firstDep) : null;
-          const remainingMin = depDate ? Math.round((depDate - now) / 60000) : null;
-          let remainingHtml = '';
-          if (remainingMin != null && remainingMin > 0) {
-            remainingHtml = `<span style="color:#f5a623;font-weight:600">In ${remainingMin} min</span> `;
-          }
-
-          const depTimeHtml = formatTimeWithDelay(
-            firstLeg && firstLeg.plannedDeparture,
-            firstLeg && firstLeg.departure,
-            firstLeg && firstLeg.departureDelay
-          );
-          const arrTimeHtml = formatTimeWithDelay(
-            lastLeg && lastLeg.plannedArrival,
-            lastLeg && lastLeg.arrival,
-            lastLeg && lastLeg.arrivalDelay
-          );
-
-          const lineSummary = legs.map(l => {
-            if (l.walking) return 'Walk';
-            const n = l.line ? l.line.name || '' : '';
-            return n || '?';
-          }).join(' → ');
-
-          html += `<div class="journey">
-            <div class="journey-header">
-              <div>
-                <div class="line-summary">${lineSummary}</div>
-                <div class="journey-time">${remainingHtml}(${depTimeHtml} → ${arrTimeHtml})</div>
-              </div>
-              <span class="journey-duration">${totalDuration}</span>
-            </div>`;
-          legs.forEach((leg, idx) => {
-            html += renderLeg(leg);
-            if (leg.walking && idx < legs.length - 1) {
-              const nextLeg = legs[idx + 1];
-              const walkStart = leg.departure || leg.plannedDeparture;
-              const nextDep = nextLeg.departure || nextLeg.plannedDeparture;
-              if (walkStart && nextDep) {
-                const availSec = (new Date(nextDep) - new Date(walkStart)) / 1000;
-                const availMin = Math.round(availSec / 60);
-                html += `<div style="display:flex;align-items:center;gap:0.65rem;padding:0.15rem 0 0.15rem 0.3rem;font-size:0.8rem;color:#888">
-                  <div style="min-width:28px;text-align:center;font-size:0.75rem">🚶</div>
-                  <div><span style="font-weight:600;color:#555">${availMin} min</span> to next departure</div>
-                </div>`;
-              }
-            }
-          });
-          html += '</div>';
-        });
+        data.journeys.forEach(j => { html += renderJourney(j); });
+        html += '<div id="loadMoreSentinel" style="text-align:center;padding:1rem;color:#888;font-size:0.85rem">Scroll for more</div>';
         results.innerHTML += html;
+        setupScrollObserver();
       } catch (err) {
         results.innerHTML += `<div class="error">${err.message}</div>`;
       } finally {
