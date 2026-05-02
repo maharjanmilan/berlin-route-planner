@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BVG Journey Planner</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #f0f0f0;
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      padding: 2rem 1rem;
+    }
+    .app { width: 100%; max-width: 640px; }
+    h1 { text-align: center; margin-bottom: 1.5rem; color: #222; }
+    .card {
+      background: #fff;
+      border-radius: 12px;
+      padding: 1.5rem;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      margin-bottom: 1rem;
+    }
+    .field { margin-bottom: 1rem; }
+    .field label {
+      display: block;
+      font-weight: 600;
+      margin-bottom: 0.35rem;
+      color: #333;
+      font-size: 0.9rem;
+    }
+    .field input {
+      width: 100%;
+      padding: 0.65rem 0.85rem;
+      font-size: 1rem;
+      border: 1.5px solid #ddd;
+      border-radius: 8px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .field input:focus { border-color: #f5a623; }
+    .field .hint { font-size: 0.75rem; color: #888; margin-top: 0.2rem; }
+    .swap-row { display: flex; justify-content: center; margin-bottom: 1rem; }
+    .swap-btn {
+      background: #f5a623;
+      color: #fff;
+      border: none;
+      border-radius: 50%;
+      width: 36px;
+      height: 36px;
+      font-size: 1.1rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.15s;
+    }
+    .swap-btn:hover { background: #e09510; }
+    .search-btn {
+      width: 100%;
+      padding: 0.75rem;
+      font-size: 1.05rem;
+      font-weight: 600;
+      background: #f5a623;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .search-btn:hover { background: #e09510; }
+    .search-btn:disabled { background: #ccc; cursor: not-allowed; }
+    .spinner { display: none; width: 100%; text-align: center; padding: 2rem; color: #666; }
+    .spinner.active { display: block; }
+    .error { background: #fff0f0; color: #c00; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; }
+    .journey {
+      background: #fff;
+      border-radius: 12px;
+      padding: 1rem 1.5rem;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      margin-bottom: 0.75rem;
+    }
+    .journey-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 0.75rem;
+      gap: 0.5rem;
+    }
+    .line-summary { font-size: 1.15rem; font-weight: 600; color: #222; }
+    .journey-time { font-size: 0.9rem; color: #666; font-weight: 400; margin-top: 0.15rem; }
+    .journey-duration { color: #f5a623; font-size: 1.1rem; font-weight: 700; white-space: nowrap; }
+    .leg {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.65rem;
+      padding: 0.5rem 0;
+      font-size: 0.9rem;
+      border-top: 1px solid #f0f0f0;
+    }
+    .leg:first-child { border-top: none; }
+    .leg-icon {
+      min-width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.7rem;
+      font-weight: 700;
+      color: #fff;
+      flex-shrink: 0;
+      margin-top: 2px;
+    }
+    .leg-icon.walk   { background: #999; }
+    .leg-icon.bus    { background: #f0b400; }
+    .leg-icon.train  { background: #e74c3c; }
+    .leg-icon.strain { background: #2ecc71; }
+    .leg-icon.subway { background: #3498db; }
+    .leg-icon.tram   { background: #e74c3c; }
+    .leg-icon.ferry  { background: #1abc9c; }
+    .leg-detail { flex: 1; min-width: 0; }
+    .leg-line { font-weight: 600; }
+    .leg-stops { color: #666; font-size: 0.85rem; }
+    .leg-meta { font-size: 0.8rem; color: #888; margin-top: 0.15rem; }
+    .leg-meta span { margin-right: 0.75rem; }
+    .delay {
+      color: #e74c3c;
+      font-size: 0.8rem;
+      font-weight: 600;
+      margin-left: 0.15rem;
+    }
+    .platform {
+      display: inline-block;
+      background: #eee;
+      color: #333;
+      font-size: 0.8rem;
+      font-weight: 600;
+      padding: 0.1rem 0.35rem;
+      border-radius: 3px;
+      margin-left: 0.2rem;
+    }
+    .stopover-list { display: none; }
+    .stopover-list.open { display: block; }
+    .leg-toggle {
+      background: none;
+      border: none;
+      color: #f5a623;
+      cursor: pointer;
+      font-size: 0.8rem;
+      padding: 0;
+      margin-top: 0.15rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <h1>BVG Journey Planner</h1>
+
+    <div class="card">
+      <div class="field">
+        <label for="fromInput">From</label>
+        <input type="text" id="fromInput" list="fromList" placeholder="Type a location or pick from list..." autocomplete="off">
+        <datalist id="fromList"></datalist>
+        <div class="hint">Type any address, stop, or pick a suggestion</div>
+      </div>
+
+      <div class="swap-row">
+        <button class="swap-btn" id="swapBtn" title="Swap">&#8645;</button>
+      </div>
+
+      <div class="field">
+        <label for="toInput">To</label>
+        <input type="text" id="toInput" list="toList" placeholder="Type a location or pick from list..." autocomplete="off">
+        <datalist id="toList"></datalist>
+        <div class="hint">Type any address, stop, or pick a suggestion</div>
+      </div>
+
+      <button class="search-btn" id="searchBtn" disabled>Find Journeys</button>
+    </div>
+
+    <div class="spinner" id="spinner">Searching for journeys...</div>
+    <div id="results"></div>
+  </div>
+
+  <script>
+    const API = 'https://v6.bvg.transport.rest';
+
+    const LOCATIONS = [
+      'Alexanderplatz',
+      'Berlin Hauptbahnhof',
+      'Zoologischer Garten',
+      'Ostbahnhof',
+      'Südkreuz',
+      'Gesundbrunnen',
+      'Friedrichstraße',
+      'Potsdamer Platz',
+      'Brandenburger Tor',
+      'Flughafen BER',
+      'Warschauer Straße',
+      'Hermannplatz',
+      'Kurfürstendamm',
+      'Schönefeld',
+      'Olympiastadion',
+      'Tegel',
+      'Spandau',
+      'Lichtenberg',
+      'Schöneweide',
+      'Ostkreuz',
+    ];
+
+    const locationCache = new Map();
+
+    const fromInput = document.getElementById('fromInput');
+    const toInput   = document.getElementById('toInput');
+    const fromList  = document.getElementById('fromList');
+    const toList    = document.getElementById('toList');
+    const searchBtn = document.getElementById('searchBtn');
+    const swapBtn   = document.getElementById('swapBtn');
+    const spinner   = document.getElementById('spinner');
+    const results   = document.getElementById('results');
+
+    function populateDatalist(datalist) {
+      LOCATIONS.forEach(name => {
+        const opt = document.createElement('option');
+        opt.value = name;
+        datalist.appendChild(opt);
+      });
+    }
+    populateDatalist(fromList);
+    populateDatalist(toList);
+
+    function canSearch() {
+      const fv = fromInput.value.trim();
+      const tv = toInput.value.trim();
+      return fv && tv && fv !== tv;
+    }
+    function updateSearchBtn() { searchBtn.disabled = !canSearch(); }
+    fromInput.addEventListener('input', updateSearchBtn);
+    toInput.addEventListener('input', updateSearchBtn);
+
+    swapBtn.addEventListener('click', () => {
+      const tmp = fromInput.value;
+      fromInput.value = toInput.value;
+      toInput.value = tmp;
+      updateSearchBtn();
+    });
+
+    async function resolveLocation(query) {
+      if (locationCache.has(query)) return locationCache.get(query);
+      const url = `${API}/locations?query=${encodeURIComponent(query)}&results=3`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`Location lookup failed: ${res.status}`);
+      const data = await res.json();
+      if (!Array.isArray(data) || data.length === 0) {
+        throw new Error(`No location found for "${query}"`);
+      }
+      const loc = data[0];
+      if (!loc.id) throw new Error(`No ID in location result for "${query}"`);
+      locationCache.set(query, loc);
+      return loc;
+    }
+
+    function legIcon(leg) {
+      if (leg.walking) return { cls: 'walk', label: 'W' };
+      const name = (leg.line && leg.line.name) || '';
+      const product = (leg.line && leg.line.product) || '';
+      if (product === 'bus')        return { cls: 'bus',    label: 'B' };
+      if (product === 'tram')       return { cls: 'tram',   label: 'T' };
+      if (product === 'ferry')      return { cls: 'ferry',  label: 'F' };
+      if (product === 'subway')     return { cls: 'subway', label: 'U' };
+      if (product === 'suburban')   return { cls: 'strain', label: 'S' };
+      if (product === 'regional')   return { cls: 'train',  label: 'R' };
+      if (product === 'express')    return { cls: 'train',  label: 'R' };
+      // Fallback: guess from line name prefix
+      const prefix = name.charAt(0).toUpperCase();
+      if (prefix === 'S') return { cls: 'strain', label: 'S' };
+      if (prefix === 'U') return { cls: 'subway', label: 'U' };
+      if (prefix === 'M') return { cls: 'tram',   label: 'T' };
+      if (prefix === 'R' || prefix === 'F' || prefix === 'I') return { cls: 'train', label: 'R' };
+      return { cls: 'bus', label: '?' };
+    }
+
+    function formatTime(iso) {
+      if (!iso) return '?';
+      return new Date(iso).toLocaleTimeString('de-DE', { hour:'2-digit', minute:'2-digit' });
+    }
+
+    function formatDuration(sec) {
+      if (sec == null || sec === 0) return '';
+      const totalSec = Math.round(sec);
+      const h = Math.floor(totalSec / 3600);
+      const m = Math.round((totalSec % 3600) / 60);
+      if (h > 0) return `${h}h ${m}m`;
+      return `${m} min`;
+    }
+
+    // Get leg duration in seconds, computing from times if not provided
+    function legDurationSec(leg) {
+      if (leg.duration) return leg.duration;
+      if (leg.departure && leg.arrival) {
+        return (new Date(leg.arrival) - new Date(leg.departure)) / 1000;
+      }
+      return 0;
+    }
+
+    function platformStr(planned, actual) {
+      const p = actual || planned;
+      if (!p) return '';
+      if (actual && planned && actual !== planned) {
+        return `<span class="platform">Gl. ${actual}</span> <span style="font-size:0.75rem;color:#999;text-decoration:line-through">${planned}</span>`;
+      }
+      return `<span class="platform">Gl. ${p}</span>`;
+    }
+
+    // Returns delay suffix like "(+5 min)" or empty string
+    function delaySuffix(delaySec, plannedTime, actualTime) {
+      if (delaySec == null || delaySec === 0) return '';
+      const min = Math.round(delaySec / 60);
+      return `<span class="delay">(+${min} min)</span>`;
+    }
+
+    // Format time for display: planned time with delay suffix if delayed
+    function formatTimeWithDelay(plannedIso, actualIso, delaySec) {
+      const time = plannedIso || actualIso;
+      if (!time) return '?';
+      let html = formatTime(time);
+      if (delaySec && delaySec > 0) {
+        const min = Math.round(delaySec / 60);
+        html += `<span class="delay"> (+${min} min)</span>`;
+      }
+      return html;
+    }
+
+    function renderLeg(leg) {
+      const icon = legIcon(leg);
+      const walking = !!leg.walking;
+      const origin = leg.origin ? leg.origin.name || '' : '';
+      const dest   = leg.destination ? leg.destination.name || '' : '';
+      const name   = leg.line ? leg.line.name || '' : '';
+      const headsign = leg.direction || '';
+      // Build display: "S3 (S Erkner Bhf)" — headsign in brackets
+      let lineDisplay;
+      if (walking) {
+        lineDisplay = 'Walking';
+      } else if (name && headsign) {
+        lineDisplay = `${name} (${headsign})`;
+      } else if (name) {
+        lineDisplay = name;
+      } else {
+        lineDisplay = 'Transit';
+      }
+      const duration = formatDuration(legDurationSec(leg));
+      const stopovers = leg.stopovers || [];
+
+      const depTimeHtml = formatTimeWithDelay(leg.plannedDeparture, leg.departure, leg.departureDelay);
+      const arrTimeHtml = formatTimeWithDelay(leg.plannedArrival, leg.arrival, leg.arrivalDelay);
+
+      const depPlat = platformStr(
+        leg.origin && (leg.origin.plannedDeparturePlatform || leg.plannedDeparturePlatform),
+        leg.origin && (leg.origin.departurePlatform || leg.departurePlatform)
+      );
+      const arrPlat = platformStr(
+        leg.destination && (leg.destination.plannedArrivalPlatform || leg.plannedArrivalPlatform),
+        leg.destination && (leg.destination.arrivalPlatform || leg.arrivalPlatform)
+      );
+
+      let metaHtml = '';
+      if (!walking && (depPlat || arrPlat)) {
+        metaHtml += ` ${depPlat} → ${arrPlat}`;
+      }
+      if (walking && leg.distance) {
+        metaHtml += `<span>${Math.round(leg.distance)} m</span>`;
+      }
+
+      let html = `<div class="leg">
+        <div class="leg-icon ${icon.cls}">${icon.label}</div>
+        <div class="leg-detail">
+          <div>
+            <span class="leg-line">${lineDisplay}</span>
+            <span style="color:#888;font-size:0.85rem">${depTimeHtml}</span>
+            ${!walking ? '<span style="color:#888;font-size:0.85rem"> → ' + arrTimeHtml + '</span>' : ''}
+            ${duration ? '<span style="font-weight:600;color:#555;margin-left:0.3rem">(' + duration + ')</span>' : ''}
+          </div>
+          <div class="leg-stops">${origin} → ${dest}</div>
+          ${metaHtml ? '<div class="leg-meta">' + metaHtml + '</div>' : ''}`;
+
+      if (stopovers.length > 0) {
+        const sid = 'so-' + Math.random().toString(36).slice(2, 8);
+        html += `<button class="leg-toggle" onclick="var el=document.getElementById('${sid}');el.classList.toggle('open');this.textContent=el.classList.contains('open')?'− stops':'+ ${stopovers.length} stops'">+ ${stopovers.length} stops</button>
+        <div class="stopover-list" id="${sid}">`;
+        stopovers.forEach(s => {
+          const stopName = s.stop ? s.stop.name : (s.name || '');
+          const sTime = formatTimeWithDelay(
+            s.plannedDeparture || s.plannedArrival,
+            s.departure || s.arrival,
+            s.departureDelay || s.arrivalDelay
+          );
+          const sPlat = platformStr(
+            s.plannedDeparturePlatform || s.plannedArrivalPlatform,
+            s.departurePlatform || s.arrivalPlatform
+          );
+          html += `<div style="font-size:0.8rem;color:#888;padding:0.15rem 0 0.15rem 0.5rem">${sTime} ${stopName} ${sPlat}</div>`;
+        });
+        html += '</div>';
+      }
+
+      html += '</div></div>';
+      return html;
+    }
+
+    async function search() {
+      if (!canSearch()) return;
+      const fromQuery = fromInput.value.trim();
+      const toQuery = toInput.value.trim();
+
+      searchBtn.disabled = true;
+      spinner.classList.add('active');
+      results.innerHTML = '';
+
+      try {
+        const [fromLoc, toLoc] = await Promise.all([
+          resolveLocation(fromQuery),
+          resolveLocation(toQuery),
+        ]);
+
+        results.innerHTML =
+          `<div class="card" style="font-size:0.85rem;color:#666;margin-bottom:1rem">
+            From: <strong>${fromLoc.name || fromQuery}</strong> &nbsp;→&nbsp;
+            To: <strong>${toLoc.name || toQuery}</strong>
+          </div>`;
+
+        const journeysUrl = `${API}/journeys?from=${encodeURIComponent(fromLoc.id)}&to=${encodeURIComponent(toLoc.id)}&results=5&stopovers=true`;
+        const res = await fetch(journeysUrl);
+        if (!res.ok) throw new Error(`Journey search failed: ${res.status}`);
+        const data = await res.json();
+
+        if (!data.journeys || data.journeys.length === 0) {
+          results.innerHTML += '<p style="text-align:center;color:#666">No journeys found.</p>';
+          return;
+        }
+
+        let html = '';
+        data.journeys.forEach((j, i) => {
+          const legs = j.legs || [];
+          const firstLeg = legs[0];
+          const lastLeg = legs[legs.length - 1];
+
+          // Total duration = arrival time minus departure time
+          const firstDep = (firstLeg && (firstLeg.departure || firstLeg.plannedDeparture));
+          const lastArr  = (lastLeg && (lastLeg.arrival || lastLeg.plannedArrival));
+          const totalSec = (firstDep && lastArr) ? (new Date(lastArr) - new Date(firstDep)) / 1000 : 0;
+          const totalDuration = formatDuration(totalSec) || '?';
+
+          // Time remaining until departure
+          const now = new Date();
+          const depDate = firstDep ? new Date(firstDep) : null;
+          const remainingMin = depDate ? Math.round((depDate - now) / 60000) : null;
+          let remainingHtml = '';
+          if (remainingMin != null && remainingMin > 0) {
+            remainingHtml = `<span style="color:#f5a623;font-weight:600">In ${remainingMin} min</span> `;
+          }
+
+          const depTimeHtml = formatTimeWithDelay(
+            firstLeg && firstLeg.plannedDeparture,
+            firstLeg && firstLeg.departure,
+            firstLeg && firstLeg.departureDelay
+          );
+          const arrTimeHtml = formatTimeWithDelay(
+            lastLeg && lastLeg.plannedArrival,
+            lastLeg && lastLeg.arrival,
+            lastLeg && lastLeg.arrivalDelay
+          );
+
+          // Build line summary: e.g. "RE4 → Walk → S9"
+          const lineSummary = legs.map(l => {
+            if (l.walking) return 'Walk';
+            const n = l.line ? l.line.name || '' : '';
+            return n || '?';
+          }).join(' → ');
+
+          html += `<div class="journey">
+            <div class="journey-header">
+              <div>
+                <div class="line-summary">${lineSummary}</div>
+                <div class="journey-time">${remainingHtml}(${depTimeHtml} → ${arrTimeHtml})</div>
+              </div>
+              <span class="journey-duration">${totalDuration}</span>
+            </div>`;
+          legs.forEach((leg, idx) => {
+            html += renderLeg(leg);
+            // If this leg is a walk, show time available from walk start to next departure
+            if (leg.walking && idx < legs.length - 1) {
+              const nextLeg = legs[idx + 1];
+              const walkStart = leg.departure || leg.plannedDeparture;
+              const nextDep = nextLeg.departure || nextLeg.plannedDeparture;
+              if (walkStart && nextDep) {
+                const availSec = (new Date(nextDep) - new Date(walkStart)) / 1000;
+                const availMin = Math.round(availSec / 60);
+                html += `<div style="display:flex;align-items:center;gap:0.65rem;padding:0.15rem 0 0.15rem 0.3rem;font-size:0.8rem;color:#888">
+                  <div style="min-width:28px;text-align:center;font-size:0.75rem">🚶</div>
+                  <div><span style="font-weight:600;color:#555">${availMin} min</span> to next departure</div>
+                </div>`;
+              }
+            }
+          });
+          html += '</div>';
+        });
+        results.innerHTML += html;
+      } catch (err) {
+        results.innerHTML += `<div class="error">${err.message}</div>`;
+      } finally {
+        spinner.classList.remove('active');
+        searchBtn.disabled = false;
+      }
+    }
+
+    searchBtn.addEventListener('click', search);
+
+    [fromInput, toInput].forEach(el => {
+      el.addEventListener('keydown', e => {
+        if (e.key === 'Enter') search();
+      });
+    });
+  </script>
+</body>
+</html>
