@@ -23,7 +23,7 @@
       box-shadow: 0 2px 8px rgba(0,0,0,0.1);
       margin-bottom: 1rem;
     }
-    .field { margin-bottom: 1rem; }
+    .field { margin-bottom: 1rem; position: relative; }
     .field label {
       display: block;
       font-weight: 600;
@@ -153,6 +153,72 @@
       padding: 0;
       margin-top: 0.15rem;
     }
+
+    /* Autocomplete dropdown */
+    .suggestions {
+      display: none;
+      position: absolute;
+      top: 100%;
+      left: 0;
+      right: 0;
+      background: #fff;
+      border: 1.5px solid #ddd;
+      border-top: none;
+      border-radius: 0 0 10px 10px;
+      max-height: 320px;
+      overflow-y: auto;
+      z-index: 10;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    }
+    .suggestions.open { display: block; }
+    .suggestions .section-label {
+      padding: 0.4rem 0.85rem;
+      font-size: 0.7rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      color: #999;
+      letter-spacing: 0.05em;
+      background: #fafafa;
+      border-bottom: 1px solid #f0f0f0;
+    }
+    .suggestions .item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.55rem 0.85rem;
+      cursor: pointer;
+      font-size: 0.9rem;
+      border-bottom: 1px solid #f5f5f5;
+      transition: background 0.1s;
+    }
+    .suggestions .item:hover,
+    .suggestions .item.active { background: #fff7e6; }
+    .suggestions .item:last-child { border-bottom: none; }
+    .suggestions .item-name { flex: 1; min-width: 0; }
+    .suggestions .item-type {
+      font-size: 0.7rem;
+      color: #999;
+      margin-left: 0.5rem;
+    }
+    .fav-btn {
+      background: none;
+      border: none;
+      cursor: pointer;
+      font-size: 1.1rem;
+      padding: 0.15rem 0.3rem;
+      flex-shrink: 0;
+      color: #ccc;
+      transition: color 0.1s;
+      line-height: 1;
+    }
+    .fav-btn.faved { color: #f5a623; }
+    .fav-btn:hover { color: #f5a623; }
+    .suggestions .no-results {
+      padding: 0.75rem 0.85rem;
+      color: #999;
+      font-size: 0.85rem;
+      text-align: center;
+    }
   </style>
 </head>
 <body>
@@ -160,22 +226,20 @@
     <h1>BVG Journey Planner</h1>
 
     <div class="card">
-      <div class="field">
+      <div class="field" id="fromField">
         <label for="fromInput">From</label>
-        <input type="text" id="fromInput" list="fromList" placeholder="Type a location or pick from list..." autocomplete="off">
-        <datalist id="fromList"></datalist>
-        <div class="hint">Type any address, stop, or pick a suggestion</div>
+        <input type="text" id="fromInput" placeholder="Type a location..." autocomplete="off">
+        <div class="suggestions" id="fromSuggestions"></div>
       </div>
 
       <div class="swap-row">
         <button class="swap-btn" id="swapBtn" title="Swap">&#8645;</button>
       </div>
 
-      <div class="field">
+      <div class="field" id="toField">
         <label for="toInput">To</label>
-        <input type="text" id="toInput" list="toList" placeholder="Type a location or pick from list..." autocomplete="off">
-        <datalist id="toList"></datalist>
-        <div class="hint">Type any address, stop, or pick a suggestion</div>
+        <input type="text" id="toInput" placeholder="Type a location..." autocomplete="off">
+        <div class="suggestions" id="toSuggestions"></div>
       </div>
 
       <button class="search-btn" id="searchBtn" disabled>Find Journeys</button>
@@ -188,68 +252,246 @@
   <script>
     const API = 'https://v6.bvg.transport.rest';
 
-    const LOCATIONS = [
-      'Alexanderplatz',
-      'Berlin Hauptbahnhof',
-      'Zoologischer Garten',
-      'Ostbahnhof',
-      'Südkreuz',
-      'Gesundbrunnen',
-      'Friedrichstraße',
-      'Potsdamer Platz',
-      'Brandenburger Tor',
-      'Flughafen BER',
-      'Warschauer Straße',
-      'Hermannplatz',
-      'Kurfürstendamm',
-      'Schönefeld',
-      'Olympiastadion',
-      'Tegel',
-      'Spandau',
-      'Lichtenberg',
-      'Schöneweide',
-      'Ostkreuz',
-    ];
+    // --- Favorites (cookie-based) ---
+    function getFavorites() {
+      try {
+        const raw = document.cookie.split('; ').find(r => r.startsWith('bvg_favs='));
+        if (raw) return JSON.parse(decodeURIComponent(raw.split('=')[1]));
+      } catch (e) {}
+      return [];
+    }
+    function saveFavorites(favs) {
+      const json = encodeURIComponent(JSON.stringify(favs));
+      document.cookie = `bvg_favs=${json};path=/;max-age=31536000;SameSite=Lax`;
+    }
+    function addFavorite(loc) {
+      const favs = getFavorites();
+      if (!favs.find(f => f.id === loc.id)) {
+        favs.unshift(loc);
+        saveFavorites(favs);
+      }
+    }
+    function removeFavorite(id) {
+      saveFavorites(getFavorites().filter(f => f.id !== id));
+    }
+    function isFavorited(id) {
+      return getFavorites().some(f => f.id === id);
+    }
 
-    const locationCache = new Map();
+    // --- State ---
+    const state = {
+      from: null, // { id, name }
+      to: null,
+    };
 
-    const fromInput = document.getElementById('fromInput');
-    const toInput   = document.getElementById('toInput');
-    const fromList  = document.getElementById('fromList');
-    const toList    = document.getElementById('toList');
-    const searchBtn = document.getElementById('searchBtn');
-    const swapBtn   = document.getElementById('swapBtn');
-    const spinner   = document.getElementById('spinner');
-    const results   = document.getElementById('results');
+    const fromInput    = document.getElementById('fromInput');
+    const toInput      = document.getElementById('toInput');
+    const fromSuggest  = document.getElementById('fromSuggestions');
+    const toSuggest    = document.getElementById('toSuggestions');
+    const searchBtn    = document.getElementById('searchBtn');
+    const swapBtn      = document.getElementById('swapBtn');
+    const spinner      = document.getElementById('spinner');
+    const results      = document.getElementById('results');
 
-    function populateDatalist(datalist) {
-      LOCATIONS.forEach(name => {
-        const opt = document.createElement('option');
-        opt.value = name;
-        datalist.appendChild(opt);
+    // --- Autocomplete ---
+    let activeIdx = -1;
+    let activeField = null;
+    let currentItems = [];
+    let debounceTimer = null;
+
+    function updateSearchBtn() {
+      searchBtn.disabled = !(state.from && state.to && state.from.id !== state.to.id);
+    }
+
+    function selectLocation(field, loc) {
+      const input = field === 'from' ? fromInput : toInput;
+      input.value = loc.name;
+      state[field] = { id: loc.id, name: loc.name };
+      closeSuggestions(field === 'from' ? fromSuggest : toSuggest);
+      updateSearchBtn();
+    }
+
+    function clearSelection(field) {
+      state[field] = null;
+      updateSearchBtn();
+    }
+
+    function closeSuggestions(el) {
+      el.classList.remove('open');
+      activeIdx = -1;
+      currentItems = [];
+    }
+
+    function focusSuggestion(el, idx) {
+      const items = el.querySelectorAll('.item');
+      items.forEach(it => it.classList.remove('active'));
+      if (idx >= 0 && idx < items.length) {
+        items[idx].classList.add('active');
+        items[idx].scrollIntoView({ block: 'nearest' });
+      }
+    }
+
+    function buildSuggestionItem(loc, field, isFav) {
+      const div = document.createElement('div');
+      div.className = 'item';
+      div.innerHTML = `
+        <span class="item-name">${escHtml(loc.name)}</span>
+        <span class="item-type">${loc.type || ''}</span>
+        <button class="fav-btn ${isFav ? 'faved' : ''}" data-id="${escHtml(loc.id)}" data-name="${escHtml(loc.name)}" title="${isFav ? 'Remove favorite' : 'Add to favorites'}">★</button>`;
+      div.querySelector('.item-name').addEventListener('click', () => selectLocation(field, loc));
+      div.querySelector('.fav-btn').addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (isFavorited(loc.id)) {
+          removeFavorite(loc.id);
+        } else {
+          addFavorite(loc);
+        }
+        // Re-render suggestions
+        renderSuggestions(field, currentItems);
+      });
+      return div;
+    }
+
+    function renderSuggestions(field, items) {
+      const el = field === 'from' ? fromSuggest : toSuggest;
+      el.innerHTML = '';
+      currentItems = items;
+      activeIdx = -1;
+
+      // Show favorites that match the current query
+      const query = (field === 'from' ? fromInput : toInput).value.trim().toLowerCase();
+      const favs = getFavorites();
+      const matchingFavs = query
+        ? favs.filter(f => f.name.toLowerCase().includes(query))
+        : favs.slice(0, 8); // show all if no query, cap at 8
+
+      if (matchingFavs.length > 0) {
+        const label = document.createElement('div');
+        label.className = 'section-label';
+        label.textContent = '★ Favorites';
+        el.appendChild(label);
+        matchingFavs.forEach(loc => {
+          el.appendChild(buildSuggestionItem(loc, field, true));
+        });
+      }
+
+      if (items && items.length > 0) {
+        const label = document.createElement('div');
+        label.className = 'section-label';
+        label.textContent = matchingFavs.length > 0 ? 'Search Results' : 'Suggestions';
+        el.appendChild(label);
+        items.forEach(loc => {
+          const alreadyShown = matchingFavs.some(f => f.id === loc.id);
+          if (!alreadyShown) {
+            el.appendChild(buildSuggestionItem(loc, field, isFavorited(loc.id)));
+          }
+        });
+      }
+
+      if (matchingFavs.length === 0 && (!items || items.length === 0) && query) {
+        const div = document.createElement('div');
+        div.className = 'no-results';
+        div.textContent = 'No locations found — press Enter to search with this text';
+        el.appendChild(div);
+      }
+
+      el.classList.add('open');
+    }
+
+    function escHtml(s) {
+      const d = document.createElement('div');
+      d.textContent = s;
+      return d.innerHTML;
+    }
+
+    async function doAutocomplete(field) {
+      const input = field === 'from' ? fromInput : toInput;
+      const query = input.value.trim();
+
+      // Clear selection when user types
+      if (state[field] && state[field].name !== query) {
+        clearSelection(field);
+      }
+
+      if (query.length < 2) {
+        // Show only favorites
+        renderSuggestions(field, []);
+        return;
+      }
+
+      try {
+        const url = `${API}/locations?query=${encodeURIComponent(query)}&results=6`;
+        const res = await fetch(url);
+        if (!res.ok) throw new Error('API error');
+        const data = await res.json();
+        const items = Array.isArray(data) ? data.filter(l => l.id) : [];
+        renderSuggestions(field, items);
+      } catch (e) {
+        renderSuggestions(field, []);
+      }
+    }
+
+    function setupAutocomplete(field) {
+      const input = field === 'from' ? fromInput : toInput;
+      const suggestEl = field === 'from' ? fromSuggest : toSuggest;
+
+      input.addEventListener('input', () => {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => doAutocomplete(field), 250);
+      });
+
+      input.addEventListener('focus', () => {
+        if (input.value.trim().length >= 0) {
+          doAutocomplete(field);
+        }
+      });
+
+      input.addEventListener('keydown', (e) => {
+        const items = suggestEl.querySelectorAll('.item');
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          activeIdx = Math.min(activeIdx + 1, items.length - 1);
+          focusSuggestion(suggestEl, activeIdx);
+        } else if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          activeIdx = Math.max(activeIdx - 1, 0);
+          focusSuggestion(suggestEl, activeIdx);
+        } else if (e.key === 'Enter') {
+          if (activeIdx >= 0 && activeIdx < items.length) {
+            e.preventDefault();
+            items[activeIdx].querySelector('.item-name').click();
+          } else {
+            closeSuggestions(suggestEl);
+          }
+        } else if (e.key === 'Escape') {
+          closeSuggestions(suggestEl);
+        }
+      });
+
+      // Close on outside click
+      document.addEventListener('click', (e) => {
+        if (!input.parentElement.contains(e.target)) {
+          closeSuggestions(suggestEl);
+        }
       });
     }
-    populateDatalist(fromList);
-    populateDatalist(toList);
 
-    function canSearch() {
-      const fv = fromInput.value.trim();
-      const tv = toInput.value.trim();
-      return fv && tv && fv !== tv;
-    }
-    function updateSearchBtn() { searchBtn.disabled = !canSearch(); }
-    fromInput.addEventListener('input', updateSearchBtn);
-    toInput.addEventListener('input', updateSearchBtn);
+    setupAutocomplete('from');
+    setupAutocomplete('to');
 
+    // --- Swap ---
     swapBtn.addEventListener('click', () => {
-      const tmp = fromInput.value;
+      const tmpState = state.from;
+      state.from = state.to;
+      state.to = tmpState;
+      const tmpVal = fromInput.value;
       fromInput.value = toInput.value;
-      toInput.value = tmp;
+      toInput.value = tmpVal;
       updateSearchBtn();
     });
 
+    // --- Search ---
     async function resolveLocation(query) {
-      if (locationCache.has(query)) return locationCache.get(query);
       const url = `${API}/locations?query=${encodeURIComponent(query)}&results=3`;
       const res = await fetch(url);
       if (!res.ok) throw new Error(`Location lookup failed: ${res.status}`);
@@ -259,7 +501,6 @@
       }
       const loc = data[0];
       if (!loc.id) throw new Error(`No ID in location result for "${query}"`);
-      locationCache.set(query, loc);
       return loc;
     }
 
@@ -274,7 +515,6 @@
       if (product === 'suburban')   return { cls: 'strain', label: 'S' };
       if (product === 'regional')   return { cls: 'train',  label: 'R' };
       if (product === 'express')    return { cls: 'train',  label: 'R' };
-      // Fallback: guess from line name prefix
       const prefix = name.charAt(0).toUpperCase();
       if (prefix === 'S') return { cls: 'strain', label: 'S' };
       if (prefix === 'U') return { cls: 'subway', label: 'U' };
@@ -297,7 +537,6 @@
       return `${m} min`;
     }
 
-    // Get leg duration in seconds, computing from times if not provided
     function legDurationSec(leg) {
       if (leg.duration) return leg.duration;
       if (leg.departure && leg.arrival) {
@@ -315,14 +554,6 @@
       return `<span class="platform">Gl. ${p}</span>`;
     }
 
-    // Returns delay suffix like "(+5 min)" or empty string
-    function delaySuffix(delaySec, plannedTime, actualTime) {
-      if (delaySec == null || delaySec === 0) return '';
-      const min = Math.round(delaySec / 60);
-      return `<span class="delay">(+${min} min)</span>`;
-    }
-
-    // Format time for display: planned time with delay suffix if delayed
     function formatTimeWithDelay(plannedIso, actualIso, delaySec) {
       const time = plannedIso || actualIso;
       if (!time) return '?';
@@ -341,7 +572,6 @@
       const dest   = leg.destination ? leg.destination.name || '' : '';
       const name   = leg.line ? leg.line.name || '' : '';
       const headsign = leg.direction || '';
-      // Build display: "S3 (S Erkner Bhf)" — headsign in brackets
       let lineDisplay;
       if (walking) {
         lineDisplay = 'Walking';
@@ -412,24 +642,20 @@
     }
 
     async function search() {
-      if (!canSearch()) return;
-      const fromQuery = fromInput.value.trim();
-      const toQuery = toInput.value.trim();
+      if (!state.from || !state.to) return;
 
       searchBtn.disabled = true;
       spinner.classList.add('active');
       results.innerHTML = '';
 
       try {
-        const [fromLoc, toLoc] = await Promise.all([
-          resolveLocation(fromQuery),
-          resolveLocation(toQuery),
-        ]);
+        const fromLoc = state.from;
+        const toLoc = state.to;
 
         results.innerHTML =
           `<div class="card" style="font-size:0.85rem;color:#666;margin-bottom:1rem">
-            From: <strong>${fromLoc.name || fromQuery}</strong> &nbsp;→&nbsp;
-            To: <strong>${toLoc.name || toQuery}</strong>
+            From: <strong>${fromLoc.name}</strong> &nbsp;→&nbsp;
+            To: <strong>${toLoc.name}</strong>
           </div>`;
 
         const journeysUrl = `${API}/journeys?from=${encodeURIComponent(fromLoc.id)}&to=${encodeURIComponent(toLoc.id)}&results=5&stopovers=true`;
@@ -448,13 +674,11 @@
           const firstLeg = legs[0];
           const lastLeg = legs[legs.length - 1];
 
-          // Total duration = arrival time minus departure time
           const firstDep = (firstLeg && (firstLeg.departure || firstLeg.plannedDeparture));
           const lastArr  = (lastLeg && (lastLeg.arrival || lastLeg.plannedArrival));
           const totalSec = (firstDep && lastArr) ? (new Date(lastArr) - new Date(firstDep)) / 1000 : 0;
           const totalDuration = formatDuration(totalSec) || '?';
 
-          // Time remaining until departure
           const now = new Date();
           const depDate = firstDep ? new Date(firstDep) : null;
           const remainingMin = depDate ? Math.round((depDate - now) / 60000) : null;
@@ -474,7 +698,6 @@
             lastLeg && lastLeg.arrivalDelay
           );
 
-          // Build line summary: e.g. "RE4 → Walk → S9"
           const lineSummary = legs.map(l => {
             if (l.walking) return 'Walk';
             const n = l.line ? l.line.name || '' : '';
@@ -491,7 +714,6 @@
             </div>`;
           legs.forEach((leg, idx) => {
             html += renderLeg(leg);
-            // If this leg is a walk, show time available from walk start to next departure
             if (leg.walking && idx < legs.length - 1) {
               const nextLeg = legs[idx + 1];
               const walkStart = leg.departure || leg.plannedDeparture;
@@ -518,12 +740,6 @@
     }
 
     searchBtn.addEventListener('click', search);
-
-    [fromInput, toInput].forEach(el => {
-      el.addEventListener('keydown', e => {
-        if (e.key === 'Enter') search();
-      });
-    });
   </script>
 </body>
 </html>
