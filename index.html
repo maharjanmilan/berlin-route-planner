@@ -15,7 +15,6 @@
       padding: 2rem 1rem;
     }
     .app { width: 100%; max-width: 640px; }
-    h1 { text-align: center; margin-bottom: 1.5rem; color: #222; }
     .card {
       background: #fff;
       border-radius: 12px;
@@ -223,8 +222,6 @@
 </head>
 <body>
   <div class="app">
-    <h1>BVG Journey Planner</h1>
-
     <div class="card">
       <div class="field" id="fromField">
         <label for="fromInput">From</label>
@@ -651,12 +648,6 @@
       try {
         const fromLoc = state.from;
         const toLoc = state.to;
-
-        results.innerHTML =
-          `<div class="card" style="font-size:0.85rem;color:#666;margin-bottom:1rem">
-            From: <strong>${fromLoc.name}</strong> &nbsp;→&nbsp;
-            To: <strong>${toLoc.name}</strong>
-          </div>`;
 
         const journeysUrl = `${API}/journeys?from=${encodeURIComponent(fromLoc.id)}&to=${encodeURIComponent(toLoc.id)}&results=5&stopovers=true`;
         const res = await fetch(journeysUrl);
