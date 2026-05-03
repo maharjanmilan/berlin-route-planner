@@ -88,8 +88,9 @@
       margin-bottom: 0.75rem;
       gap: 0.5rem;
     }
+    .journey-header > div:first-child { flex: 1; min-width: 0; }
     .line-summary { font-size: 1.15rem; font-weight: 600; color: #222; }
-    .journey-time { font-size: 0.9rem; color: #666; font-weight: 400; margin-top: 0.15rem; }
+    .journey-time { font-size: 1rem; color: #666; font-weight: 400; margin-top: 0.15rem; white-space: nowrap; }
     .journey-duration { color: #f5a623; font-size: 1.1rem; font-weight: 700; white-space: nowrap; }
     .leg {
       display: flex;
@@ -259,7 +260,7 @@
     }
     function saveFavorites(favs) {
       const json = encodeURIComponent(JSON.stringify(favs));
-      document.cookie = `bvg_favs=${json};path=/;max-age=31536000;SameSite=Lax`;
+      document.cookie = `bvg_favs=${json};path=/;max-age=1576800000;SameSite=Lax`;
     }
     function addFavorite(loc, customName) {
       const favs = getFavorites();
@@ -335,7 +336,6 @@
       const dname = locDisplayName(loc);
       div.innerHTML = `
         <span class="item-name">${escHtml(dname)}</span>
-        <span class="item-type">${loc.type || ''}</span>
         <button class="fav-btn ${isFav ? 'faved' : ''}" data-id="${escHtml(loc.id)}" data-name="${escHtml(dname)}" title="${isFav ? 'Remove favorite' : 'Add to favorites'}">★</button>`;
       div.querySelector('.item-name').addEventListener('click', () => selectLocation(field, loc));
       div.querySelector('.fav-btn').addEventListener('click', (e) => {
@@ -707,7 +707,7 @@
       );
 
       const lineSummary = legs.map(l => {
-        if (l.walking) return 'Walk';
+        if (l.walking) return '🚶';
         const n = l.line ? l.line.name || '' : '';
         return n || '?';
       }).join(' → ');
@@ -716,9 +716,9 @@
         <div class="journey-header">
           <div>
             <div class="line-summary">${lineSummary}</div>
-            <div class="journey-time">${remainingHtml}(${depTimeHtml} → ${arrTimeHtml})</div>
+            <div class="journey-time">${remainingHtml}<br/>[ ${depTimeHtml} → ${arrTimeHtml} ]</div>
           </div>
-          <span class="journey-duration">${totalDuration}</span>
+          <span class="journey-duration">(${totalDuration})</span>
         </div>`;
       legs.forEach((leg, idx) => {
         html += renderLeg(leg);
