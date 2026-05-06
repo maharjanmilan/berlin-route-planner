@@ -71,6 +71,21 @@
     }
     .search-btn:hover { background: #e09510; }
     .search-btn:disabled { background: #ccc; cursor: not-allowed; }
+    .clear-btn {
+      position: absolute;
+      right: 0.5rem;
+      top: 2.15rem;
+      background: none;
+      border: none;
+      font-size: 1.25rem;
+      cursor: pointer;
+      color: #999;
+      padding: 0.15rem;
+      line-height: 1;
+      display: none;
+    }
+    .clear-btn.visible { display: block; }
+    .clear-btn:hover { color: #555; }
     .spinner { display: none; width: 100%; text-align: center; padding: 2rem; color: #666; }
     .spinner.active { display: block; }
     .error { background: #fff0f0; color: #c00; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; }
@@ -219,6 +234,21 @@
       font-size: 0.85rem;
       text-align: center;
     }
+    .earlier-btn {
+      display: block;
+      width: 100%;
+      padding: 0.65rem;
+      margin-bottom: 0.75rem;
+      background: #fff;
+      border: 1.5px solid #ddd;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 0.9rem;
+      color: #555;
+      text-align: center;
+    }
+    .earlier-btn:hover { background: #f5f5f5; }
+    .earlier-btn:disabled { opacity: 0.5; cursor: not-allowed; }
   </style>
 </head>
 <body>
@@ -227,6 +257,7 @@
       <div class="field" id="fromField">
         <label for="fromInput">From</label>
         <input type="text" id="fromInput" placeholder="Type a location..." autocomplete="off">
+        <button class="clear-btn" id="fromClear" title="Clear">×</button>
         <div class="suggestions" id="fromSuggestions"></div>
       </div>
 
@@ -237,6 +268,7 @@
       <div class="field" id="toField">
         <label for="toInput">To</label>
         <input type="text" id="toInput" placeholder="Type a location..." autocomplete="off">
+        <button class="clear-btn" id="toClear" title="Clear">×</button>
         <div class="suggestions" id="toSuggestions"></div>
       </div>
 
@@ -284,6 +316,8 @@
 
     const fromInput    = document.getElementById('fromInput');
     const toInput      = document.getElementById('toInput');
+    const fromClear    = document.getElementById('fromClear');
+    const toClear      = document.getElementById('toClear');
     const fromSuggest  = document.getElementById('fromSuggestions');
     const toSuggest    = document.getElementById('toSuggestions');
     const searchBtn    = document.getElementById('searchBtn');
@@ -307,12 +341,23 @@
       input.value = dname;
       state[field] = { id: loc.id, name: dname, type: loc.type, lat: loc.latitude, lon: loc.longitude };
       closeSuggestions(field === 'from' ? fromSuggest : toSuggest);
+      toggleClearBtn(field);
       updateSearchBtn();
     }
 
     function clearSelection(field) {
       state[field] = null;
+      const input = field === 'from' ? fromInput : toInput;
+      input.value = '';
+      toggleClearBtn(field);
       updateSearchBtn();
+      input.focus();
+    }
+
+    function toggleClearBtn(field) {
+      const input = field === 'from' ? fromInput : toInput;
+      const btn = field === 'from' ? fromClear : toClear;
+      btn.classList.toggle('visible', input.value.trim().length > 0);
     }
 
     function closeSuggestions(el) {
@@ -485,6 +530,12 @@
     setupAutocomplete('from');
     setupAutocomplete('to');
 
+    // --- Clear buttons ---
+    fromClear.addEventListener('click', () => clearSelection('from'));
+    toClear.addEventListener('click', () => clearSelection('to'));
+    fromInput.addEventListener('input', () => toggleClearBtn('from'));
+    toInput.addEventListener('input', () => toggleClearBtn('to'));
+
     // --- Swap ---
     swapBtn.addEventListener('click', () => {
       const tmpState = state.from;
@@ -493,6 +544,8 @@
       const tmpVal = fromInput.value;
       fromInput.value = toInput.value;
       toInput.value = tmpVal;
+      toggleClearBtn('from');
+      toggleClearBtn('to');
       updateSearchBtn();
     });
 
@@ -741,9 +794,10 @@
       return html;
     }
 
-    async function fetchJourneys(fromId, toId, laterThan) {
+    async function fetchJourneys(fromId, toId, { laterThan, earlierThan } = {}) {
       let url = `${API}/journeys?from=${encodeURIComponent(fromId)}&to=${encodeURIComponent(toId)}&results=5&stopovers=true`;
       if (laterThan) url += `&laterThan=${encodeURIComponent(laterThan)}`;
+      if (earlierThan) url += `&earlierThan=${encodeURIComponent(earlierThan)}`;
       const res = await fetch(url);
       if (!res.ok) throw new Error(`Journey search failed: ${res.status}`);
       return res.json();
@@ -755,7 +809,7 @@
       const sentinel = document.getElementById('loadMoreSentinel');
       if (sentinel) sentinel.textContent = 'Loading more journeys...';
       try {
-        const data = await fetchJourneys(searchCtx.fromId, searchCtx.toId, searchCtx.laterRef);
+        const data = await fetchJourneys(searchCtx.fromId, searchCtx.toId, { laterThan: searchCtx.laterRef });
         searchCtx.laterRef = data.laterRef || null;
         let html = '';
         (data.journeys || []).forEach(j => { html += renderJourney(j); });
@@ -784,6 +838,59 @@
       scrollObserver.observe(sentinel);
     }
 
+    async function fetchEarlier() {
+      if (!searchCtx || searchCtx.loadingEarlier) return;
+      searchCtx.loadingEarlier = true;
+      const btn = document.getElementById('earlierBtn');
+      if (btn) { btn.disabled = true; btn.textContent = 'Loading...'; }
+
+      try {
+        let journeys;
+        // Prefer earlierRef from the previous response for proper pagination
+        if (searchCtx.earlierRef) {
+          const data = await fetchJourneys(searchCtx.fromId, searchCtx.toId, { earlierThan: searchCtx.earlierRef });
+          journeys = data.journeys;
+          searchCtx.earlierRef = data.earlierRef || null;
+        } else {
+          // First time: use timestamp-based offset
+          searchCtx.earlierOffset = (searchCtx.earlierOffset || 0) + 1;
+          const offsetMs = searchCtx.earlierOffset * 10 * 60 * 1000;
+          const earlierThan = new Date(new Date(searchCtx.earliestDep).getTime() - offsetMs).toISOString();
+          const data = await fetchJourneys(searchCtx.fromId, searchCtx.toId, { earlierThan });
+          journeys = data.journeys;
+          searchCtx.earlierRef = data.earlierRef || null;
+        }
+
+        if (journeys && journeys.length > 0) {
+          const firstDep = journeys[0].legs?.[0]?.departure || journeys[0].legs?.[0]?.plannedDeparture;
+          if (firstDep) searchCtx.earliestDep = firstDep;
+
+          let html = '';
+          journeys.forEach(j => { html += renderJourney(j); });
+          const firstJourney = results.querySelector('.journey');
+          if (firstJourney) {
+            firstJourney.insertAdjacentHTML('beforebegin', html);
+          } else {
+            results.insertAdjacentHTML('afterbegin', html);
+          }
+        }
+
+        if (btn) {
+          btn.textContent = '▲ Earlier';
+          btn.disabled = !searchCtx.earlierRef;
+          if (!searchCtx.earlierRef) {
+            btn.textContent = '▲ No earlier journeys';
+            btn.style.color = '#999';
+          }
+        }
+      } catch (err) {
+        console.error('Earlier fetch failed:', err);
+        if (btn) { btn.textContent = '▲ Earlier (failed)'; btn.disabled = false; }
+      } finally {
+        searchCtx.loadingEarlier = false;
+      }
+    }
+
     async function search() {
       if (!state.from || !state.to) return;
 
@@ -801,21 +908,27 @@
           resolveToStopId(toLoc),
         ]);
 
-        const data = await fetchJourneys(fromId, toId, null);
+        const data = await fetchJourneys(fromId, toId);
 
         if (!data.journeys || data.journeys.length === 0) {
           results.innerHTML += '<p style="text-align:center;color:#666">No journeys found.</p>';
           return;
         }
 
+        const earliestDep = data.journeys[0].legs?.[0]?.departure || data.journeys[0].legs?.[0]?.plannedDeparture;
+
         searchCtx = {
           fromId,
           toId,
           laterRef: data.laterRef || null,
+          earlierRef: data.earlierRef || null,
           loading: false,
+          earliestDep,
+          earlierOffset: 0,
+          loadingEarlier: false,
         };
 
-        let html = '';
+        let html = '<button class="earlier-btn" id="earlierBtn" onclick="fetchEarlier()">▲ Earlier</button>';
         data.journeys.forEach(j => { html += renderJourney(j); });
         html += '<div id="loadMoreSentinel" style="text-align:center;padding:1rem;color:#888;font-size:0.85rem">Scroll for more</div>';
         results.innerHTML += html;
