@@ -175,6 +175,24 @@
       padding: 0;
       margin-top: 0.15rem;
     }
+    .leg {
+      cursor: pointer;
+      transition: background 0.1s;
+    }
+    .leg:hover {
+      background: #fff7e6;
+      border-radius: 6px;
+    }
+    .leg .maps-hint {
+      font-size: 0.7rem;
+      color: #f5a623;
+      margin-top: 0.15rem;
+      opacity: 0;
+      transition: opacity 0.1s;
+    }
+    .leg:hover .maps-hint {
+      opacity: 1;
+    }
 
     /* Autocomplete dropdown */
     .suggestions {
@@ -720,6 +738,18 @@
       return html;
     }
 
+    function mapsUrl(leg) {
+      const loc = leg.origin && leg.origin.location;
+      if (loc && loc.latitude != null && loc.longitude != null) {
+        return `https://www.google.com/maps/search/?api=1&query=${loc.latitude},${loc.longitude}`;
+      }
+      const name = leg.origin && leg.origin.name;
+      if (name) {
+        return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(name)}`;
+      }
+      return null;
+    }
+
     function renderLeg(leg) {
       const icon = legIcon(leg);
       const walking = !!leg.walking;
@@ -760,7 +790,10 @@
         metaHtml += `<span>${Math.round(leg.distance)} m</span>`;
       }
 
-      let html = `<div class="leg">
+      const mapsLink = mapsUrl(leg);
+      const clickAttr = mapsLink ? `onclick="window.open('${mapsLink}','_blank')"` : '';
+
+      let html = `<div class="leg" ${clickAttr}>
         <div class="leg-icon ${icon.cls}">${icon.label}</div>
         <div class="leg-detail">
           <div>
@@ -771,11 +804,12 @@
             ${duration ? '<span style="font-weight:600;color:#555;margin-left:0.3rem">(' + duration + ')</span>' : ''}
           </div>
           <div class="leg-stops">${origin} → ${dest}</div>
-          ${metaHtml ? '<div class="leg-meta">' + metaHtml + '</div>' : ''}`;
+          ${metaHtml ? '<div class="leg-meta">' + metaHtml + '</div>' : ''}
+          ${mapsLink ? `<div class="maps-hint">📍 Open in Google Maps</div>` : ''}`;
 
       if (stopovers.length > 0) {
         const sid = 'so-' + Math.random().toString(36).slice(2, 8);
-        html += `<button class="leg-toggle" onclick="var el=document.getElementById('${sid}');el.classList.toggle('open');this.textContent=el.classList.contains('open')?'− stops':'+ ${stopovers.length} stops'">+ ${stopovers.length} stops</button>
+        html += `<button class="leg-toggle" onclick="event.stopPropagation();var el=document.getElementById('${sid}');el.classList.toggle('open');this.textContent=el.classList.contains('open')?'− stops':'+ ${stopovers.length} stops'">+ ${stopovers.length} stops</button>
         <div class="stopover-list" id="${sid}">`;
         stopovers.forEach(s => {
           const stopName = s.stop ? s.stop.name : (s.name || '');
