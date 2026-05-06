@@ -209,6 +209,20 @@
     .suggestions .item:hover,
     .suggestions .item.active { background: #fff7e6; }
     .suggestions .item:last-child { border-bottom: none; }
+    .suggestions .current-loc {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.6rem 0.85rem;
+      cursor: pointer;
+      font-size: 0.9rem;
+      font-weight: 500;
+      color: #f5a623;
+      border-bottom: 1px solid #f5f5f5;
+      transition: background 0.1s;
+    }
+    .suggestions .current-loc:hover,
+    .suggestions .current-loc.active { background: #fff7e6; }
     .suggestions .item-name { flex: 1; min-width: 0; }
     .suggestions .item-type {
       font-size: 0.7rem;
@@ -354,6 +368,47 @@
       input.focus();
     }
 
+    async function handleCurrentLocation(field) {
+      const el = field === 'from' ? fromSuggest : toSuggest;
+      const input = field === 'from' ? fromInput : toInput;
+      input.value = 'Getting location...';
+      input.disabled = true;
+
+      try {
+        const pos = await new Promise((resolve, reject) => {
+          if (!navigator.geolocation) {
+            reject(new Error('Geolocation not supported by your browser'));
+            return;
+          }
+          navigator.geolocation.getCurrentPosition(resolve, reject, {
+            enableHighAccuracy: true,
+            timeout: 10000,
+            maximumAge: 60000,
+          });
+        });
+
+        const { latitude, longitude } = pos.coords;
+        const url = `${API}/locations/nearby?latitude=${latitude}&longitude=${longitude}&results=8&stops=true`;
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`Nearby lookup failed: ${res.status}`);
+        const data = await res.json();
+        if (!Array.isArray(data) || data.length === 0) {
+          throw new Error('No stop found near your location');
+        }
+
+        renderSuggestions(field, data);
+        input.value = '';
+        toggleClearBtn(field);
+      } catch (err) {
+        input.value = '';
+        input.placeholder = err.message || 'Location failed';
+        setTimeout(() => { input.placeholder = 'Type a location...'; }, 3000);
+        clearSelection(field);
+      } finally {
+        input.disabled = false;
+      }
+    }
+
     function toggleClearBtn(field) {
       const input = field === 'from' ? fromInput : toInput;
       const btn = field === 'from' ? fromClear : toClear;
@@ -366,8 +421,7 @@
       currentItems = [];
     }
 
-    function focusSuggestion(el, idx) {
-      const items = el.querySelectorAll('.item');
+    function focusSuggestionEl(items, idx) {
       items.forEach(it => it.classList.remove('active'));
       if (idx >= 0 && idx < items.length) {
         items[idx].classList.add('active');
@@ -406,9 +460,19 @@
       currentItems = items;
       activeIdx = -1;
 
-      // Show favorites that match the current query
       const query = (field === 'from' ? fromInput : toInput).value.trim().toLowerCase();
       const favs = getFavorites();
+
+      // "Current location" always first when query is empty or matches
+      if (!query || 'current location'.includes(query)) {
+        const div = document.createElement('div');
+        div.className = 'current-loc';
+        div.textContent = '📍 Current location';
+        div.addEventListener('click', () => handleCurrentLocation(field));
+        el.appendChild(div);
+      }
+
+      // Show favorites that match the current query
       const matchingFavs = query
         ? favs.filter(f => locDisplayName(f).toLowerCase().includes(query))
         : favs.slice(0, 8);
@@ -436,7 +500,7 @@
         });
       }
 
-      if (matchingFavs.length === 0 && (!items || items.length === 0) && query) {
+      if (matchingFavs.length === 0 && (!items || items.length === 0) && query && !'current location'.includes(query)) {
         const div = document.createElement('div');
         div.className = 'no-results';
         div.textContent = 'No locations found — press Enter to search with this text';
@@ -498,19 +562,24 @@
       });
 
       input.addEventListener('keydown', (e) => {
-        const items = suggestEl.querySelectorAll('.item');
+        const items = suggestEl.querySelectorAll('.current-loc, .item');
         if (e.key === 'ArrowDown') {
           e.preventDefault();
           activeIdx = Math.min(activeIdx + 1, items.length - 1);
-          focusSuggestion(suggestEl, activeIdx);
+          focusSuggestionEl(items, activeIdx);
         } else if (e.key === 'ArrowUp') {
           e.preventDefault();
           activeIdx = Math.max(activeIdx - 1, 0);
-          focusSuggestion(suggestEl, activeIdx);
+          focusSuggestionEl(items, activeIdx);
         } else if (e.key === 'Enter') {
           if (activeIdx >= 0 && activeIdx < items.length) {
             e.preventDefault();
-            items[activeIdx].querySelector('.item-name').click();
+            const el = items[activeIdx];
+            if (el.classList.contains('current-loc')) {
+              el.click();
+            } else {
+              el.querySelector('.item-name').click();
+            }
           } else {
             closeSuggestions(suggestEl);
           }
