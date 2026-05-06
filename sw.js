@@ -1,7 +1,9 @@
 const CACHE_NAME = 'bvg-planner-v1';
 const ASSETS = [
   './index.html',
-  './manifest.json'
+  './manifest.json',
+  './icon-192.png',
+  './icon-512.png'
 ];
 
 // Install: cache core assets
